@@ -3,6 +3,8 @@ import { initializeApp } from "firebase/app";
 // IMPORT DATABASE UTILS UNTUK REALTIME DATABASE
 import { getDatabase } from "firebase/database"; 
 
+import { getAuth } from "firebase/auth"; // 👈 Tambahkan ini
+
 // Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyAvnEK5TTQZ8Qijp80V90P6i2nnFMcLdxw",
@@ -20,3 +22,5 @@ const app = initializeApp(firebaseConfig);
 
 // INITIALIZE DATABASE DAN EXPORT AGAR BISA DIPAKAI DI HOMEPAGE.JSX
 export const db = getDatabase(app);
+
+export const auth = getAuth(app); // 👈 Ekspor auth untuk digunakan di komponen
