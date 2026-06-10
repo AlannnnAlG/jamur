@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, Sun, Moon, Bell, User, CloudRain, Wifi, WifiOff, LogIn, LogOut } from 'lucide-react';
+import { Search, Sun, Moon, Bell, User, CloudRain, Wifi, WifiOff, LogOut } from 'lucide-react';
 import { useTheme } from '@/contexts/ThemeContext.jsx';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,12 +12,11 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Badge } from '@/components/ui/badge';
-import { ref, onValue } from 'firebase/database';
-import { onAuthStateChanged, signOut } from 'firebase/auth'; // 👈 Tambahkan ini
-import { db, auth } from '../firebase'; // 👈 Import auth dari firebase.js
-import AuthModal from './AuthModal'; // 👈 Import AuthModal yang kita buat tadi
+import { ref, onValue, get } from 'firebase/database';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { db, auth } from '../firebase';
 
-const TELEGRAM_TOKEN = "8881064843:AAEPi3Vs4q9yViUmN9bGqT3CEOkx4L6fBp0";
+const TELEGRAM_TOKEN  = "8881064843:AAEPi3Vs4q9yViUmN9bGqT3CEOkx4L6fBp0";
 const TELEGRAM_CHAT_ID = "5385475869";
 
 const sendTelegram = async (message) => {
@@ -38,44 +37,61 @@ const sendTelegram = async (message) => {
 
 export default function TopNavbar() {
   const { theme, toggleTheme } = useTheme();
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [notificationCount] = useState(3);
-  const [liveData, setLiveData] = useState({ temperature: '--', humidity: '--' });
-  const [isEspOnline, setIsEspOnline] = useState(false);
+  const [currentTime, setCurrentTime]   = useState(new Date());
+  const [notificationCount]             = useState(3);
+  const [liveData, setLiveData]         = useState({ temperature: '--', humidity: '--' });
+  const [isEspOnline, setIsEspOnline]   = useState(false);
   const [lastSyncText, setLastSyncText] = useState('Never synced');
 
-  // State Manajemen Autentikasi Baru
-  const [user, setUser] = useState(null);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  // Auth & user profile
+  const [user, setUser]         = useState(null);
+  const [username, setUsername] = useState('');
 
   const lastAlertRef = useRef({ temperature: null, humidity: null });
 
-  // 0. Listener Status Login Firebase
+  // ── 0. Auth listener + fetch username dari Firebase
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      if (currentUser) {
+        try {
+          const profileRef = ref(db, `users/${currentUser.uid}/profile`);
+          const snapshot = await get(profileRef);
+          if (snapshot.exists()) {
+            setUsername(snapshot.val().username || 'Manager');
+          } else {
+            // Fallback ke bagian depan email jika profil belum tersimpan
+            const emailName = currentUser.email?.split('@')[0] || 'Manager';
+            setUsername(emailName);
+          }
+        } catch (err) {
+          console.error('Gagal ambil username navbar:', err);
+          setUsername('Manager');
+        }
+      } else {
+        setUsername('');
+      }
     });
     return () => unsubscribeAuth();
   }, []);
 
-  // 1. Jam Digital
+  // ── 1. Jam Digital
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // 2. Firebase Realtime Database Listener + Telegram Alert
+  // ── 2. Firebase Realtime Database Listener + Telegram Alert
   useEffect(() => {
     const monitoringRef = ref(db, 'tumbara/monitoring');
 
     const unsubscribe = onValue(monitoringRef, async (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        console.log("Data Firebase:", data);
 
         setLiveData({
           temperature: data.temperature ?? '--',
-          humidity: data.humidity ?? '--',
+          humidity:    data.humidity    ?? '--',
         });
 
         const kini = new Date();
@@ -120,7 +136,7 @@ export default function TopNavbar() {
     return () => unsubscribe();
   }, []);
 
-  // 3. Interval cek ESP status
+  // ── 3. Interval cek ESP status
   useEffect(() => {
     const checkInterval = setInterval(() => {
       const monitoringRef = ref(db, 'tumbara/monitoring');
@@ -141,6 +157,7 @@ export default function TopNavbar() {
   const handleSignOut = async () => {
     try {
       await signOut(auth);
+      // App.jsx akan otomatis redirect ke AuthPage setelah logout
     } catch (err) {
       console.error("Gagal Logout:", err);
     }
@@ -150,7 +167,7 @@ export default function TopNavbar() {
     <header className="sticky top-0 z-30 bg-card border-b border-border backdrop-blur-sm bg-card/95">
       <div className="flex items-center justify-between px-4 lg:px-6 h-16 gap-4">
 
-        {/* Bagian Kiri - Pencarian */}
+        {/* ── Bagian Kiri — Pencarian ── */}
         <div className="flex-1 max-w-md">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={18} />
@@ -162,7 +179,7 @@ export default function TopNavbar() {
           </div>
         </div>
 
-        {/* Bagian Kanan */}
+        {/* ── Bagian Kanan ── */}
         <div className="flex items-center gap-2 lg:gap-4">
 
           {/* Widget Suhu & Kelembaban */}
@@ -176,7 +193,10 @@ export default function TopNavbar() {
 
           {/* Last Sync */}
           <div className="hidden xl:flex items-center gap-2 text-sm text-muted-foreground">
-            {isEspOnline ? <Wifi className="text-green-500" size={16} /> : <WifiOff className="text-muted-foreground" size={16} />}
+            {isEspOnline
+              ? <Wifi className="text-green-500" size={16} />
+              : <WifiOff className="text-muted-foreground" size={16} />
+            }
             <span>{lastSyncText}</span>
           </div>
 
@@ -210,45 +230,44 @@ export default function TopNavbar() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Profil Modifikasi Dropdown */}
+          {/* ── Profil Dropdown — selalu tampil karena user pasti sudah login ── */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className={`transition-all duration-200 hover:scale-105 ${user ? 'text-primary' : 'text-muted-foreground'}`}>
-                <User size={20} />
+              <Button
+                variant="ghost"
+                size="icon"
+                className="transition-all duration-200 hover:scale-105 text-primary"
+              >
+                {/* Avatar inisial nama */}
+                <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white text-xs font-bold">
+                  {username ? username.charAt(0).toUpperCase() : <User size={16} />}
+                </div>
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel>
-                {user ? (
-                  <div className="flex flex-col">
-                    <span className="font-semibold text-foreground truncate">Farm Manager</span>
-                    <span className="text-xs text-muted-foreground truncate font-normal">{user.email}</span>
-                  </div>
-                ) : (
-                  'Guest Mode'
-                )}
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-semibold text-foreground truncate">
+                    {username || 'Farm Manager'}
+                  </span>
+                  <span className="text-xs text-muted-foreground truncate font-normal">
+                    {user?.email}
+                  </span>
+                </div>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
-              
-              {user ? (
-                <DropdownMenuItem onClick={handleSignOut} className="text-destructive focus:text-destructive cursor-pointer">
-                  <LogOut className="mr-2 h-4 w-4" />
-                  <span>Sign out</span>
-                </DropdownMenuItem>
-              ) : (
-                <DropdownMenuItem onClick={() => setIsAuthModalOpen(true)} className="text-primary focus:text-primary cursor-pointer">
-                  <LogIn className="mr-2 h-4 w-4" />
-                  <span>Sign In / Register</span>
-                </DropdownMenuItem>
-              )}
+              <DropdownMenuItem
+                onClick={handleSignOut}
+                className="text-destructive focus:text-destructive cursor-pointer"
+              >
+                <LogOut className="mr-2 h-4 w-4" />
+                <span>Sign Out</span>
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
 
         </div>
       </div>
-
-      {/* Render Dialog Modal Auth */}
-      <AuthModal isOpen={isAuthModalOpen} onClose={() => setIsAuthModalOpen(false)} />
     </header>
   );
 }

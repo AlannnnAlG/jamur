@@ -1,6 +1,5 @@
-
-import React from 'react';
-import { Route, Routes, BrowserRouter as Router } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Route, Routes, BrowserRouter as Router, Navigate } from 'react-router-dom';
 import { ThemeProvider } from './contexts/ThemeContext.jsx';
 import { Toaster } from '@/components/ui/sonner';
 import ScrollToTop from './components/ScrollToTop.jsx';
@@ -14,8 +13,50 @@ import HistoricalPage from './pages/HistoricalPage.jsx';
 import AnalyticsPage from './pages/AnalyticsPage.jsx';
 import ReportsPage from './pages/ReportsPage.jsx';
 import SettingsPage from './pages/SettingsPage.jsx';
+import AuthPage from './pages/AuthPage.jsx';
+import { onAuthStateChanged } from 'firebase/auth';
+import { auth } from './firebase';
+import { Leaf } from 'lucide-react';
 
 function App() {
+  const [user, setUser] = useState(undefined); // undefined = masih loading
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser ?? null);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Masih cek session Firebase → tampilkan loading
+  if (user === undefined) {
+    return (
+      <ThemeProvider>
+        <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-xl bg-green-600 flex items-center justify-center">
+              <Leaf size={20} className="text-white" />
+            </div>
+            <span className="text-2xl font-black text-foreground">Tandurai</span>
+          </div>
+          <div className="animate-spin rounded-full h-7 w-7 border-[3px] border-muted border-t-green-600" />
+          <p className="text-sm text-muted-foreground">Memuat sistem Tandurai...</p>
+        </div>
+      </ThemeProvider>
+    );
+  }
+
+  // Belum login → tampilkan AuthPage saja
+  if (!user) {
+    return (
+      <ThemeProvider>
+        <AuthPage />
+        <Toaster />
+      </ThemeProvider>
+    );
+  }
+
+  // Sudah login → tampilkan dashboard dengan semua route
   return (
     <ThemeProvider>
       <Router>

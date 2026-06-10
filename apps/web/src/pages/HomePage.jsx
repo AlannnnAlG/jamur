@@ -9,8 +9,9 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ref, onValue } from 'firebase/database';
-import { db } from '../firebase';
+import { ref, onValue, get } from 'firebase/database';
+import { onAuthStateChanged } from 'firebase/auth';
+import { db, auth } from '../firebase';
 
 // ─────────────────────────────────────────────────────────────
 // WEATHER HELPERS
@@ -114,7 +115,7 @@ const generateInsights = (kpiData, currentWeather) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// FARM HEALTH SCORE — Real scoring logic
+// FARM HEALTH SCORE
 // ─────────────────────────────────────────────────────────────
 const calcTempScore = (val) => {
   if (val === 0) return 0;
@@ -175,7 +176,6 @@ const FarmHealthScore = ({ kpiData, currentWeather }) => {
   const moisture = kpiData.moisture.value;
   const water    = kpiData.waterLevel.value;
 
-  // Individual scores
   const tScore = calcTempScore(temp);
   const hScore = calcHumScore(humidity);
   const cScore = calcCo2Score(co2);
@@ -183,7 +183,6 @@ const FarmHealthScore = ({ kpiData, currentWeather }) => {
   const mScore = calcMoistureScore(moisture);
   const wScore = calcWaterScore(water);
 
-  // Weather penalty: cuaca panas luar bisa nambah beban
   let weatherPenalty = 0;
   if (currentWeather) {
     if (currentWeather.temp > 35) weatherPenalty = 5;
@@ -192,12 +191,10 @@ const FarmHealthScore = ({ kpiData, currentWeather }) => {
     if (['95'].includes(wCode)) weatherPenalty += 3;
   }
 
-  // Category scores (weighted)
-  const ventilasi   = Math.max(0, Math.round((tScore * 0.6 + cScore * 0.4) - weatherPenalty));
-  const irigasi     = Math.round(mScore * 0.55 + wScore * 0.45);
-  const kualitasUdara = Math.round(aScore * 0.5 + hScore * 0.5);
+  const ventilasi      = Math.max(0, Math.round((tScore * 0.6 + cScore * 0.4) - weatherPenalty));
+  const irigasi        = Math.round(mScore * 0.55 + wScore * 0.45);
+  const kualitasUdara  = Math.round(aScore * 0.5 + hScore * 0.5);
 
-  // Overall dengan bobot berbeda per kategori
   const overall = Math.min(100, Math.round(
     ventilasi    * 0.35 +
     irigasi      * 0.35 +
@@ -207,16 +204,15 @@ const FarmHealthScore = ({ kpiData, currentWeather }) => {
   const circumference    = 2 * Math.PI * 26;
   const strokeDashoffset = circumference - (overall / 100) * circumference;
 
-  const getBarColor = (v) => v >= 80 ? 'bg-green-500' : v >= 60 ? 'bg-yellow-500' : v >= 40 ? 'bg-orange-500' : 'bg-red-500';
+  const getBarColor   = (v) => v >= 80 ? 'bg-green-500' : v >= 60 ? 'bg-yellow-500' : v >= 40 ? 'bg-orange-500' : 'bg-red-500';
   const getScoreLabel = (v) => v >= 85 ? 'Sangat Baik' : v >= 70 ? 'Baik' : v >= 55 ? 'Cukup' : v >= 40 ? 'Perlu Perhatian' : 'Kritis';
   const getScoreColor = (v) => v >= 85 ? 'text-green-600' : v >= 70 ? 'text-emerald-600' : v >= 55 ? 'text-yellow-600' : v >= 40 ? 'text-orange-600' : 'text-red-600';
 
-  // Detail per sensor untuk ditampilkan
   const sensorDetails = [
-    { label: 'Suhu', value: tScore, raw: temp > 0 ? `${temp}°C` : '–' },
-    { label: 'Kelembapan', value: hScore, raw: humidity > 0 ? `${humidity}%` : '–' },
-    { label: 'CO₂', value: cScore, raw: co2 > 0 ? `${co2} ppm` : '–' },
-    { label: 'Kualitas Udara', value: aScore, raw: airQ > 0 ? `${airQ}%` : '–' },
+    { label: 'Suhu',             value: tScore, raw: temp     > 0 ? `${temp}°C`     : '–' },
+    { label: 'Kelembapan',       value: hScore, raw: humidity > 0 ? `${humidity}%`  : '–' },
+    { label: 'CO₂',              value: cScore, raw: co2      > 0 ? `${co2} ppm`    : '–' },
+    { label: 'Kualitas Udara',   value: aScore, raw: airQ     > 0 ? `${airQ}%`      : '–' },
     { label: 'Kelembapan Media', value: mScore, raw: `${moisture}%` },
     { label: 'Level Air Tangki', value: wScore, raw: `${water}%` },
   ];
@@ -230,7 +226,6 @@ const FarmHealthScore = ({ kpiData, currentWeather }) => {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-5 flex-1 flex flex-col gap-4">
-        {/* Score circle + label */}
         <div className="flex items-center justify-between">
           <div>
             <div className="flex items-baseline gap-1">
@@ -254,7 +249,6 @@ const FarmHealthScore = ({ kpiData, currentWeather }) => {
           </svg>
         </div>
 
-        {/* Category bars */}
         <div className="space-y-2">
           {[
             { label: 'Suhu & Ventilasi', value: ventilasi },
@@ -273,7 +267,6 @@ const FarmHealthScore = ({ kpiData, currentWeather }) => {
           ))}
         </div>
 
-        {/* Sensor detail grid */}
         <div className="border-t border-border/50 pt-3 grid grid-cols-2 gap-x-3 gap-y-1.5">
           {sensorDetails.map((s) => (
             <div key={s.label} className="flex items-center justify-between gap-1">
@@ -527,6 +520,8 @@ const ChatbotPopup = ({ kpiData, currentWeather }) => {
 // MAIN PAGE
 // ─────────────────────────────────────────────────────────────
 export default function HomePage() {
+  const [username, setUsername] = useState('');
+
   const [kpiData, setKpiData] = useState({
     temperature: { value: 0,    trend: 'stable', status: 'optimal' },
     humidity:    { value: 0,    trend: 'stable', status: 'optimal' },
@@ -545,6 +540,30 @@ export default function HomePage() {
   const [hourlyForecast, setHourlyForecast] = useState([]);
   const [weatherLoading, setWeatherLoading] = useState(true);
 
+  // ── Ambil username dari Firebase berdasarkan user yang sedang login
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        try {
+          const profileRef = ref(db, `users/${user.uid}/profile`);
+          const snapshot = await get(profileRef);
+          if (snapshot.exists()) {
+            setUsername(snapshot.val().username || 'Manager');
+          } else {
+            // Fallback: gunakan bagian depan email jika profil belum ada
+            const emailName = user.email?.split('@')[0] || 'Manager';
+            setUsername(emailName);
+          }
+        } catch (err) {
+          console.error('Gagal ambil username:', err);
+          setUsername('Manager');
+        }
+      }
+    });
+    return () => unsubAuth();
+  }, []);
+
+  // ── Cuaca
   useEffect(() => {
     const fetchRealWeather = async () => {
       try {
@@ -571,6 +590,7 @@ export default function HomePage() {
     return () => clearInterval(interval);
   }, []);
 
+  // ── Firebase sensor data
   useEffect(() => {
     const tumbaraRef = ref(db, 'tumbara');
     const unsubscribe = onValue(tumbaraRef, (snapshot) => {
@@ -615,11 +635,29 @@ export default function HomePage() {
       </Helmet>
 
       <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Dashboard Overview</h1>
-          <p className="text-muted-foreground">Real-time monitoring of your smart farm environment</p>
-        </div>
+        {/* ── Header dengan nama user ── */}
+        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
+          <div className="flex items-start justify-between">
+            <div>
+              <h1 className="text-3xl font-bold mb-1">
+                Dasbor Overview{' '}
+                {username && (
+                  <span className="text-green-600 dark:text-green-500">{username}</span>
+                )}
+              </h1>
+              <p className="text-muted-foreground text-sm">
+                Monitoring real-time lingkungan smart farm kamu · {new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+              </p>
+            </div>
+            {/* Badge status keseluruhan */}
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-600 text-xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              Sistem Aktif
+            </div>
+          </div>
+        </motion.div>
 
+        {/* ── KPI Cards ── */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <KPICard title="Temperature"            value={kpiData.temperature.value} unit="°C"  trend={kpiData.temperature.trend} status={kpiData.temperature.status} optimalRange="24-30°C"     icon={Thermometer} delay={0}   />
           <KPICard title="Humidity"               value={kpiData.humidity.value}    unit="%"   trend={kpiData.humidity.trend}    status={kpiData.humidity.status}    optimalRange="70-85%"      icon={Droplets}    delay={0.1} />
@@ -629,7 +667,7 @@ export default function HomePage() {
           <KPICard title="Water Tank Level"       value={kpiData.waterLevel.value}  unit="%"   trend={kpiData.waterLevel.trend}  status={kpiData.waterLevel.status}  optimalRange=">50%"        icon={Waves}       delay={0.5} />
         </div>
 
-        {/* Weather + System Status */}
+        {/* ── Weather + System Status ── */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <motion.div className="xl:col-span-2" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.5, delay: 0.6 }}>
             <Card className="h-full flex flex-col justify-between overflow-hidden">
@@ -697,7 +735,7 @@ export default function HomePage() {
           </motion.div>
         </div>
 
-        {/* AI Insights + Farm Health Score */}
+        {/* ── AI Insights + Farm Health Score ── */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <motion.div className="xl:col-span-2" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.8 }}>
             <AIInsightsPanel kpiData={kpiData} currentWeather={currentWeather} />
