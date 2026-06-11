@@ -1,134 +1,110 @@
 import React, { useState, useEffect } from 'react';
 import { Helmet } from 'react-helmet';
-import { motion } from 'framer-motion';
 import { Download, Search, Filter, ArrowUpRight, ArrowDownRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
-// INTEGRASI FIREBASE & UTILS DATA REAL
 import { ref, onValue } from 'firebase/database';
-import { db } from '../firebase'; // Pastikan path config Firebase kamu sudah benar
+import { db } from '../firebase';
 import { exportToCSV, exportToExcel } from '@/lib/exportUtils.js';
 
 export default function HistoricalPage() {
-  const [data, setData] = useState([]);
+  // historyLog = array of snapshots yang dikumpulkan selama sesi ini
+  const [historyLog, setHistoryLog] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
 
-  // STATE UNTUK MENGHITUNG AVERAGE SECARA DINAMIS
   const [summary, setSummary] = useState({
     avgTemp: '--',
     avgHumidity: '--',
     avgCo2: '--',
-    avgAirQuality: '--',
-    trends: { temp: 'up', hum: 'down', co2: 'up', aq: 'up' },
-    changes: { temp: '0.0', hum: '0.0', co2: '0.0', aq: '0.0' }
+    avgPressure: '--',
+    trends: { temp: 'up', hum: 'down', co2: 'up', pressure: 'up' },
+    changes: { temp: '0.0', hum: '0.0', co2: '0.0', pressure: '0.0' }
   });
 
   useEffect(() => {
-    // Sesuai path data di Firebase kamu
-    const historyRef = ref(db, 'tumbara/history');
+    // ✅ Path sama persis dengan dashboard yang sudah bekerja
+    const sensorRef = ref(db, 'tumbara/monitoring/sensor1');
 
-    const unsubscribe = onValue(historyRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const rawData = snapshot.val();
-        
-        // Ubah objek Firebase menjadi Array
-        const formattedList = Object.keys(rawData).map((key, index) => {
-          const item = rawData[key];
-
-          /* ==================================================================
-            🔥 SOLUSI UTAMA: BYPASS WAKTU AKTUAL SEKARANG (WIB)
-            ==================================================================
-            Jika ESP32 mengirim waktu simulasi lama atau tidak mengirim waktu, 
-            kita paksa buatkan objek Date aktual berdasarkan waktu laptop saat ini.
-            Biar ada jeda antar log di grafik, kita kurangi beberapa detik ke belakang 
-            berdasarkan urutan lognya (index).
-          */
-          const waktuSekarang = new Date();
-          waktuSekarang.setSeconds(waktuSekarang.getSeconds() - (index * 5)); 
-          const currentTimestamp = waktuSekarang.getTime();
-
-          return {
-            id: key,
-            ...item,
-            // Paksa timpa timestamp rekayasa dari ESP32 dengan waktu aktual WIB detik ini
-            timestamp: currentTimestamp 
-          };
-        });
-
-        // Urutkan data berdasarkan timestamp terbaru di atas untuk tabel
-        formattedList.sort((a, b) => b.timestamp - a.timestamp);
-        setData(formattedList);
-
-        // --- PROSES HITUNG RATA-RATA (AVERAGE) DATA RIIL ---
-        const totalRecords = formattedList.length;
-        if (totalRecords > 0) {
-          const sumTemp = formattedList.reduce((acc, curr) => acc + (Number(curr.temperature) || 0), 0);
-          const sumHum = formattedList.reduce((acc, curr) => acc + (Number(curr.humidity) || 0), 0);
-          const sumCo2 = formattedList.reduce((acc, curr) => acc + (Number(curr.co2) || 0), 0);
-          const sumAq = formattedList.reduce((acc, curr) => acc + (Number(curr.airQuality) || 0), 0);
-
-          const currentAvgTemp = (sumTemp / totalRecords).toFixed(1);
-          const currentAvgHum = (sumHum / totalRecords).toFixed(1);
-          const currentAvgCo2 = Math.round(sumCo2 / totalRecords);
-          const currentAvgAq = (sumAq / totalRecords).toFixed(1);
-
-          let tempTrend = 'up', humTrend = 'down', co2Trend = 'up', aqTrend = 'up';
-          let tempDiff = '0.0', humDiff = '0.0', co2Diff = '0.0', aqDiff = '0.0';
-
-          if (totalRecords > 1) {
-            const latest = formattedList[0];
-            const previous = formattedList[1];
-
-            tempDiff = ((latest.temperature || 0) - (previous.temperature || 0)).toFixed(1);
-            tempTrend = parseFloat(tempDiff) >= 0 ? 'up' : 'down';
-            tempDiff = Math.abs(tempDiff);
-
-            humDiff = ((latest.humidity || 0) - (previous.humidity || 0)).toFixed(1);
-            humTrend = parseFloat(humDiff) >= 0 ? 'up' : 'down';
-            humDiff = Math.abs(humDiff);
-
-            co2Diff = ((latest.co2 || 0) - (previous.co2 || 0)).toFixed(0);
-            co2Trend = parseInt(co2Diff) >= 0 ? 'up' : 'down';
-            co2Diff = Math.abs(co2Diff);
-
-            aqDiff = ((latest.airQuality || 0) - (previous.airQuality || 0)).toFixed(1);
-            aqTrend = parseFloat(aqDiff) >= 0 ? 'up' : 'down';
-            aqDiff = Math.abs(aqDiff);
-          }
-
-          setSummary({
-            avgTemp: `${currentAvgTemp}°C`,
-            avgHumidity: `${currentAvgHum}%`,
-            avgCo2: `${currentAvgCo2} ppm`,
-            avgAirQuality: `${currentAvgAq}%`,
-            trends: { temp: tempTrend, hum: humTrend, co2: co2Trend, aq: aqTrend },
-            changes: { temp: tempDiff, hum: humDiff, co2: co2Diff, aq: aqDiff }
-          });
-        }
-      } else {
-        setData([]);
-        setSummary({
-          avgTemp: '--', avgHumidity: '--', avgCo2: '--', avgAirQuality: '--',
-          trends: { temp: 'up', hum: 'down', co2: 'up', aq: 'up' },
-          changes: { temp: '0.0', hum: '0.0', co2: '0.0', aq: '0.0' }
-        });
-      }
+    const unsubscribe = onValue(sensorRef, (snapshot) => {
       setLoading(false);
+
+      if (!snapshot.exists()) return;
+
+      const sensorData = snapshot.val();
+
+      // Buat satu entri baru dari snapshot terkini
+      const newEntry = {
+        id: `log-${Date.now()}`,
+        timestamp: Date.now(),
+        temperature: sensorData.temperature ?? null,
+        humidity:    sensorData.humidity    ?? null,
+        co2:         sensorData.co2         ?? null,
+        pressure:    sensorData.pressure    ?? null,
+        espStatus:   sensorData.espStatus   ?? 'Unknown',
+        sprayStatus: sensorData.sprayStatus ?? false,
+        fanStatus:   sensorData.fanStatus   ?? false,
+      };
+
+      // Tambahkan ke log, terbaru di atas, maksimal 100 entri
+      setHistoryLog(prev => {
+        const updated = [newEntry, ...prev].slice(0, 100);
+
+        // Hitung summary dari semua log yang terkumpul
+        const total = updated.length;
+        const sumTemp     = updated.reduce((a, c) => a + (Number(c.temperature) || 0), 0);
+        const sumHum      = updated.reduce((a, c) => a + (Number(c.humidity)    || 0), 0);
+        const sumCo2      = updated.reduce((a, c) => a + (Number(c.co2)         || 0), 0);
+        const sumPressure = updated.reduce((a, c) => a + (Number(c.pressure)    || 0), 0);
+
+        const avgTemp     = (sumTemp     / total).toFixed(1);
+        const avgHum      = (sumHum      / total).toFixed(1);
+        const avgCo2      = Math.round(sumCo2 / total);
+        const avgPressure = (sumPressure / total).toFixed(1);
+
+        let trends  = { temp: 'up', hum: 'up', co2: 'up', pressure: 'up' };
+        let changes = { temp: '0.0', hum: '0.0', co2: '0', pressure: '0.0' };
+
+        if (total > 1) {
+          const latest = updated[0];
+          const prev   = updated[1];
+
+          const td = ((latest.temperature || 0) - (prev.temperature || 0));
+          const hd = ((latest.humidity    || 0) - (prev.humidity    || 0));
+          const cd = ((latest.co2         || 0) - (prev.co2         || 0));
+          const pd = ((latest.pressure    || 0) - (prev.pressure    || 0));
+
+          trends  = { temp: td >= 0 ? 'up' : 'down', hum: hd >= 0 ? 'up' : 'down', co2: cd >= 0 ? 'up' : 'down', pressure: pd >= 0 ? 'up' : 'down' };
+          changes = { temp: Math.abs(td).toFixed(1), hum: Math.abs(hd).toFixed(1), co2: Math.abs(cd).toFixed(0), pressure: Math.abs(pd).toFixed(1) };
+        }
+
+        setSummary({
+          avgTemp:     `${avgTemp}°C`,
+          avgHumidity: `${avgHum}%`,
+          avgCo2:      `${avgCo2} ppm`,
+          avgPressure: `${avgPressure} hPa`,
+          trends,
+          changes,
+        });
+
+        return updated;
+      });
     });
 
     return () => unsubscribe();
   }, []);
 
-  // Filter pencarian data tabel
-  const filteredData = data.filter(item => 
-    Object.values(item).some(val => 
+  const filteredData = historyLog.filter(item =>
+    Object.values(item).some(val =>
       String(val).toLowerCase().includes(searchTerm.toLowerCase())
     )
   );
+
+  // Data grafik: ambil 20 entri terbaru, dibalik agar urut dari lama ke baru
+  const chartData = [...historyLog].slice(0, 20).reverse();
 
   const SummaryCard = ({ title, value, trend, change }) => (
     <Card>
@@ -139,7 +115,7 @@ export default function HistoricalPage() {
           {value !== '--' && (
             <div className={`flex items-center text-sm ${trend === 'up' ? 'text-green-500' : 'text-red-500'}`}>
               {trend === 'up' ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-              <span>{change}%</span>
+              <span>{change}</span>
             </div>
           )}
         </div>
@@ -154,6 +130,7 @@ export default function HistoricalPage() {
       </Helmet>
 
       <div className="space-y-6">
+        {/* Header */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
             <h1 className="text-3xl font-bold">Historical Data</h1>
@@ -171,40 +148,47 @@ export default function HistoricalPage() {
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <SummaryCard title="Average Temperature" value={summary.avgTemp} trend={summary.trends.temp} change={summary.changes.temp} />
-          <SummaryCard title="Average Humidity" value={summary.avgHumidity} trend={summary.trends.hum} change={summary.changes.hum} />
-          <SummaryCard title="Average CO₂" value={summary.avgCo2} trend={summary.trends.co2} change={summary.changes.co2} />
-          <SummaryCard title="Average Air Quality" value={summary.avgAirQuality} trend={summary.trends.aq} change={summary.changes.aq} />
+          <SummaryCard title="Average Temperature" value={summary.avgTemp}     trend={summary.trends.temp}     change={summary.changes.temp}     />
+          <SummaryCard title="Average Humidity"    value={summary.avgHumidity} trend={summary.trends.hum}      change={summary.changes.hum}      />
+          <SummaryCard title="Average CO₂"         value={summary.avgCo2}      trend={summary.trends.co2}      change={summary.changes.co2}      />
+          <SummaryCard title="Avg Pressure"        value={summary.avgPressure} trend={summary.trends.pressure} change={summary.changes.pressure} />
         </div>
 
-        {/* Charts Trend */}
+        {/* Chart */}
         <Card>
           <CardHeader>
             <CardTitle>Temperature & Humidity Trends</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="h-[300px] w-full">
-              {data.length === 0 ? (
-                <div className="h-full w-full flex items-center justify-center border border-dashed rounded-lg text-sm text-muted-foreground">
-                  Garis tren grafik akan muncul secara otomatis setelah data log Firebase terisi.
+              {chartData.length < 2 ? (
+                <div className="h-full w-full flex flex-col items-center justify-center border border-dashed rounded-lg gap-2">
+                  <p className="text-sm text-muted-foreground">
+                    {loading
+                      ? 'Menghubungkan ke sensor...'
+                      : `Mengumpulkan data grafik... (${chartData.length}/2 titik)`}
+                  </p>
+                  {!loading && chartData.length === 1 && (
+                    <p className="text-xs text-muted-foreground">Grafik muncul setelah data kedua masuk</p>
+                  )}
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={[...data].slice(0, 20).reverse()}>
+                  <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis 
-                      dataKey="timestamp" 
-                      tickFormatter={(val) => val ? new Date(val).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit', second:'2-digit'}) : '--:--:--'} 
-                      stroke="hsl(var(--muted-foreground))" 
+                    <XAxis
+                      dataKey="timestamp"
+                      tickFormatter={(val) => val ? new Date(val).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--'}
+                      stroke="hsl(var(--muted-foreground))"
                     />
-                    <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" />
+                    <YAxis yAxisId="left"  stroke="hsl(var(--muted-foreground))" />
                     <YAxis yAxisId="right" orientation="right" stroke="hsl(var(--muted-foreground))" />
-                    <Tooltip 
+                    <Tooltip
                       labelFormatter={(label) => label ? new Date(label).toLocaleString('id-ID') : ''}
-                      contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', color: 'hsl(var(--foreground))' }} 
+                      contentStyle={{ backgroundColor: 'hsl(var(--card))', borderColor: 'hsl(var(--border))', color: 'hsl(var(--foreground))' }}
                     />
-                    <Line yAxisId="left" type="monotone" dataKey="temperature" name="Temp (°C)" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
-                    <Line yAxisId="right" type="monotone" dataKey="humidity" name="Hum (%)" stroke="hsl(var(--secondary))" strokeWidth={2} dot={false} />
+                    <Line yAxisId="left"  type="monotone" dataKey="temperature" name="Temp (°C)" stroke="hsl(var(--primary))"   strokeWidth={2} dot={false} />
+                    <Line yAxisId="right" type="monotone" dataKey="humidity"    name="Hum (%)"   stroke="hsl(var(--secondary))" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -212,7 +196,7 @@ export default function HistoricalPage() {
           </CardContent>
         </Card>
 
-        {/* Data Table Log */}
+        {/* Table */}
         <Card>
           <CardHeader className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
             <CardTitle>Data Log</CardTitle>
@@ -238,34 +222,34 @@ export default function HistoricalPage() {
                     <th className="px-4 py-3">Temp (°C)</th>
                     <th className="px-4 py-3">Humidity (%)</th>
                     <th className="px-4 py-3">CO₂ (ppm)</th>
-                    <th className="px-4 py-3">Air Quality</th>
-                    <th className="px-4 py-3">Spray</th>
-                    <th className="px-4 py-3 rounded-tr-lg">Fan</th>
+                    <th className="px-4 py-3">Pressure (hPa)</th>
+                    <th className="px-4 py-3">ESP Status</th>
+                    <th className="px-4 py-3 rounded-tr-lg">Spray</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan="7" className="text-center py-8 text-muted-foreground">Mendengarkan database Firebase...</td></tr>
+                    <tr><td colSpan="7" className="text-center py-8 text-muted-foreground">Menghubungkan ke sensor1...</td></tr>
                   ) : filteredData.length === 0 ? (
-                    <tr><td colSpan="7" className="text-center py-8 text-muted-foreground">Belum ada riwayat log yang tercatat.</td></tr>
+                    <tr><td colSpan="7" className="text-center py-8 text-muted-foreground">Belum ada data yang masuk. Tunggu sebentar...</td></tr>
                   ) : (
                     filteredData.map((row) => (
                       <tr key={row.id} className="border-b border-border hover:bg-muted/30 transition-colors">
                         <td className="px-4 py-3 font-medium">
-                          {row.timestamp ? new Date(row.timestamp).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'medium' }) : '---'}
+                          {new Date(row.timestamp).toLocaleString('id-ID', { dateStyle: 'medium', timeStyle: 'medium' })}
                         </td>
                         <td className="px-4 py-3 font-semibold">{row.temperature ?? '--'}°C</td>
                         <td className="px-4 py-3">{row.humidity ?? '--'}%</td>
                         <td className="px-4 py-3">{row.co2 ?? '--'} ppm</td>
-                        <td className="px-4 py-3">{row.airQuality ?? '--'}%</td>
+                        <td className="px-4 py-3">{row.pressure ?? '--'} hPa</td>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${row.sprayStatus === 'Active' || row.sprayStatus === true ? 'bg-green-500/20 text-green-600' : 'bg-muted text-muted-foreground'}`}>
-                            {row.sprayStatus === true || row.sprayStatus === 'Active' ? 'Active' : 'Inactive'}
+                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${row.espStatus === 'Online' ? 'bg-green-500/20 text-green-600' : 'bg-red-500/20 text-red-500'}`}>
+                            {row.espStatus}
                           </span>
                         </td>
                         <td className="px-4 py-3">
-                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${row.fanStatus === 'Active' || row.fanStatus === true ? 'bg-green-500/20 text-green-600' : 'bg-muted text-muted-foreground'}`}>
-                            {row.fanStatus === true || row.fanStatus === 'Active' ? 'Active' : 'Inactive'}
+                          <span className={`px-2 py-1 rounded-full text-xs font-bold ${row.sprayStatus === true || row.sprayStatus === 'Active' ? 'bg-green-500/20 text-green-600' : 'bg-muted text-muted-foreground'}`}>
+                            {row.sprayStatus === true || row.sprayStatus === 'Active' ? 'Active' : 'Inactive'}
                           </span>
                         </td>
                       </tr>

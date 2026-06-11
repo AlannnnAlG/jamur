@@ -550,7 +550,6 @@ export default function HomePage() {
           if (snapshot.exists()) {
             setUsername(snapshot.val().username || 'Manager');
           } else {
-            // Fallback: gunakan bagian depan email jika profil belum ada
             const emailName = user.email?.split('@')[0] || 'Manager';
             setUsername(emailName);
           }
@@ -591,39 +590,65 @@ export default function HomePage() {
   }, []);
 
   // ── Firebase sensor data
+  // PERUBAHAN UTAMA: baca dari tumbara/monitoring/sensor1 (hardware baru)
+  // bukan lagi dari tumbara/monitoring langsung (ESP32 lama)
   useEffect(() => {
-    const tumbaraRef = ref(db, 'tumbara');
-    const unsubscribe = onValue(tumbaraRef, (snapshot) => {
+    const sensor1Ref = ref(db, 'tumbara/monitoring/sensor1');
+    const unsubscribe = onValue(sensor1Ref, (snapshot) => {
       if (snapshot.exists()) {
-        const rootData = snapshot.val();
-        const monitorData = rootData.monitoring;
-        if (monitorData) {
-          setKpiData((prev) => {
-            const tempVal = monitorData.temperature ?? prev.temperature.value;
-            const humVal  = monitorData.humidity    ?? prev.humidity.value;
-            const co2Val  = monitorData.co2         ?? prev.co2.value;
-            const aqVal   = monitorData.airQuality  ?? prev.airQuality.value;
-            return {
-              ...prev,
-              temperature: { value: tempVal, trend: tempVal > prev.temperature.value ? 'up' : tempVal < prev.temperature.value ? 'down' : 'stable', status: tempVal < 24 || tempVal > 30 ? 'warning' : 'optimal' },
-              humidity:    { value: humVal,  trend: humVal  > prev.humidity.value    ? 'up' : humVal  < prev.humidity.value    ? 'down' : 'stable', status: humVal  < 70 || humVal  > 85 ? 'warning' : 'optimal' },
-              co2:         { value: co2Val,  trend: co2Val  > prev.co2.value         ? 'up' : co2Val  < prev.co2.value         ? 'down' : 'stable', status: co2Val  > 600 ? 'warning' : 'optimal' },
-              airQuality:  { value: aqVal,   trend: 'stable', status: aqVal < 90 ? 'warning' : 'optimal' },
-            };
-          });
-        }
-        if (rootData.control) {
-          const ctrl = rootData.control;
-          const isActive = ctrl.fanStatus || ctrl.sprayStatus;
-          setSystemStatus(prev => ({ ...prev, automationStatus: isActive ? 'running automated' : 'active', firebaseStatus: 'connected' }));
-        } else {
-          setSystemStatus(prev => ({ ...prev, firebaseStatus: 'connected' }));
-        }
+        const sensorData = snapshot.val();
+
+        setKpiData((prev) => {
+          const tempVal = sensorData.temperature ?? prev.temperature.value;
+          const humVal  = sensorData.humidity    ?? prev.humidity.value;
+          const co2Val  = sensorData.co2         ?? prev.co2.value;
+          // airQuality tidak ada di sensor1, pertahankan nilai sebelumnya
+          const aqVal   = prev.airQuality.value;
+
+          return {
+            ...prev,
+            temperature: {
+              value: tempVal,
+              trend: tempVal > prev.temperature.value ? 'up' : tempVal < prev.temperature.value ? 'down' : 'stable',
+              status: tempVal < 24 || tempVal > 30 ? 'warning' : 'optimal',
+            },
+            humidity: {
+              value: humVal,
+              trend: humVal > prev.humidity.value ? 'up' : humVal < prev.humidity.value ? 'down' : 'stable',
+              status: humVal < 70 || humVal > 85 ? 'warning' : 'optimal',
+            },
+            co2: {
+              value: co2Val,
+              trend: co2Val > prev.co2.value ? 'up' : co2Val < prev.co2.value ? 'down' : 'stable',
+              status: co2Val > 600 ? 'warning' : 'optimal',
+            },
+            airQuality: {
+              value: aqVal,
+              trend: 'stable',
+              status: aqVal < 90 ? 'warning' : 'optimal',
+            },
+          };
+        });
+
+        // Update espStatus ke system status
+        const espOnline = sensorData.espStatus === 'Online';
+        setSystemStatus(prev => ({
+          ...prev,
+          firebaseStatus: 'connected',
+          networkStatus: espOnline ? 'connected' : 'disconnected',
+          sensorsOnline: espOnline ? 12 : 0,
+        }));
+
         setLastSyncTime(new Date());
       } else {
+        // sensor1 node tidak ada / kosong
         setSystemStatus(prev => ({ ...prev, firebaseStatus: 'disconnected' }));
       }
-    }, (error) => { console.error('Firebase error:', error); setSystemStatus(prev => ({ ...prev, firebaseStatus: 'error' })); });
+    }, (error) => {
+      console.error('Firebase error:', error);
+      setSystemStatus(prev => ({ ...prev, firebaseStatus: 'error' }));
+    });
+
     return () => unsubscribe();
   }, []);
 
